@@ -68,12 +68,23 @@ if rol == "📱 Capturista":
     
     if foto_camara:
         imagen = Image.open(foto_camara)
-        codigos = decode(imagen)
+        
+        # --- NUEVO: FILTRO PARA MEJORAR LA LECTURA ---
+        # 1. Convertir a escala de grises (blanco y negro)
+        imagen_gris = imagen.convert('L')
+        # 2. Aumentar el contraste drásticamente (2.5 veces más)
+        optimizador = ImageEnhance.Contrast(imagen_gris)
+        imagen_mejorada = optimizador.enhance(2.5)
+        # ---------------------------------------------
+        
+        # Ahora intentamos decodificar la imagen mejorada
+        codigos = decode(imagen_mejorada)
+        
         if codigos:
             codigo_detectado = codigos[0].data.decode('utf-8')
             st.success(f"✅ Código detectado: {codigo_detectado}")
         else:
-            st.error("❌ No se detectó código. Intenta acercar la cámara.")
+            st.error("❌ No se detectó código. Intenta acercar la cámara o girar el teléfono en horizontal.")
             
     # Input manual por si falla la cámara o usan pistola bluetooth
     codigo_manual = st.text_input("O escribe el código aquí:", value=codigo_detectado)
