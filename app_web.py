@@ -51,33 +51,29 @@ rol = st.sidebar.radio("Selecciona tu perfil:", ["📱 Capturista", "💻 Admini
 if rol == "📱 Capturista":
     st.subheader("Modo Escáner")
     
-    # Obtener las pestañas (Almacenes) que existan en el Google Sheet
     pestañas = [hoja.title for hoja in libro_bd.worksheets()]
     if not pestañas:
-        st.warning("⚠️ No hay almacenes cargados. Pídele al administrador que suba el Excel base.")
+        st.warning("⚠️ No hay almacenes cargados.")
         st.stop()
         
     almacen_seleccionado = st.selectbox("1️⃣ Selecciona el Almacén:", pestañas)
+    
+    # --- NUEVO: SELECTOR DE RONDA DE CONTEO ---
+    ronda_conteo = st.selectbox("2️⃣ Ronda de captura:", ["Conteo 1", "Conteo 2", "Conteo 3"])
     hoja_actual = libro_bd.worksheet(almacen_seleccionado)
     
-    st.write("2️⃣ Escanea el producto o escribe el código")
+    st.write("3️⃣ Escanea el producto o escribe el código")
     
-    # --- LECTOR DE CÁMARA ---
     codigo_detectado = ""
     foto_camara = st.camera_input("📷 Usar cámara del celular")
     
     if foto_camara:
         imagen = Image.open(foto_camara)
-        
-        # Mejorar la imagen (Blanco y negro + Contraste)
         imagen_gris = imagen.convert('L')
         optimizador = ImageEnhance.Contrast(imagen_gris)
         imagen_mejorada = optimizador.enhance(2.5)
         
-        # INTENTO 1: Buscar en la imagen normal
         codigos = decode(imagen_mejorada)
-        
-        # INTENTO 2: Si no encuentra nada, girar la imagen 90 grados internamente
         if not codigos:
             imagen_rotada = imagen_mejorada.rotate(90, expand=True)
             codigos = decode(imagen_rotada)
@@ -88,45 +84,42 @@ if rol == "📱 Capturista":
         else:
             st.error("❌ No se detectó código. Intenta poner el teléfono en HORIZONTAL.")
             
-    # Input manual por si falla la cámara o usan pistola bluetooth
     codigo_manual = st.text_input("O escribe el código aquí:", value=codigo_detectado)
-    
-    cantidad = st.number_input("3️⃣ Cantidad física contada:", min_value=0.0, step=1.0)
+    cantidad = st.number_input("4️⃣ Cantidad física contada:", min_value=0.0, step=1.0)
     
     if st.button("💾 Guardar Conteo", type="primary", use_container_width=True):
         if not codigo_manual:
             st.warning("Falta el código de barras.")
         else:
             with st.spinner("Guardando en la nube..."):
-                # Descargar la tabla actual para buscar la fila
                 df = get_as_dataframe(hoja_actual).dropna(how='all')
                 
-                # Asumimos que la columna se llama 'Código' y creamos una temporal limpia
-                if 'Código' in df.columns:
-                    df['_codigo_limpio'] = df['Código'].apply(limpiar_codigo)
+                # Buscar columna de código sin importar mayúsculas
+                col_codigo = next((c for c in df.columns if str(c).strip().lower() in ['código', 'codigo', 'cod']), None)
+                
+                if col_codigo:
+                    df['_codigo_limpio'] = df[col_codigo].apply(limpiar_codigo)
                     codigo_buscado = limpiar_codigo(codigo_manual)
                     
                     if codigo_buscado in df['_codigo_limpio'].values:
-                        # Encontrar en qué fila de Google Sheets está el producto
                         indice_df = df[df['_codigo_limpio'] == codigo_buscado].index[0]
-                        fila_gsheets = indice_df + 2 # +2 por los encabezados y porque empieza en 1
+                        fila_gsheets = int(indice_df) + 2 
                         
-                        # Buscar o crear la columna 'Conteo'
-                        if 'Conteo' not in df.columns:
-                            col_conteo = len(df.columns) # Se agrega al final
-                            hoja_actual.update_cell(1, col_conteo, 'Conteo')
+                        df = df.drop(columns=['_codigo_limpio']) # Limpiar tabla temporal
+                        
+                        # Escribir en la columna de la ronda seleccionada (Ej. "Conteo 1")
+                        if ronda_conteo not in df.columns:
+                            col_escribir = len(df.columns) + 1
+                            hoja_actual.update_cell(1, col_escribir, ronda_conteo)
                         else:
-                            col_conteo = df.columns.get_loc('Conteo') + 1
+                            col_escribir = df.columns.get_loc(ronda_conteo) + 1
                         
-                        # Sumar a lo que ya existía en esa celda
-                        valor_actual = hoja_actual.cell(fila_gsheets, col_conteo).value
+                        valor_actual = hoja_actual.cell(fila_gsheets, col_escribir).value
                         valor_actual = float(valor_actual) if valor_actual else 0.0
                         nuevo_valor = valor_actual + cantidad
                         
-                        # Actualizar celda en la nube
-                        hoja_actual.update_cell(fila_gsheets, col_conteo, nuevo_valor)
-                        
-                        st.success(f"✔️ ¡Guardado! {cantidad} piezas agregadas al código {codigo_manual}.")
+                        hoja_actual.update_cell(fila_gsheets, col_escribir, nuevo_valor)
+                        st.success(f"✔️ ¡Guardado! {cantidad} piezas en {ronda_conteo} para el código {codigo_manual}.")
                     else:
                         st.error(f"❌ El código {codigo_manual} no existe en {almacen_seleccionado}.")
                 else:
@@ -188,26 +181,34 @@ elif rol == "💻 Administrador":
                     for hoja in libro_bd.worksheets():
                         df = get_as_dataframe(hoja)
                         
-                        # Buscar la columna de código sin importar si tiene acento o mayúsculas
-                        col_codigo = None
-                        for col in df.columns:
-                            if str(col).strip().lower() in ['código', 'codigo', 'cod']:
-                                col_codigo = col
-                                break
+                        # Buscar columnas importantes ignorando mayúsculas/minúsculas
+                        col_codigo = next((c for c in df.columns if str(c).strip().lower() in ['código', 'codigo', 'cod']), None)
+                        col_existencia = next((c for c in df.columns if str(c).strip().lower() == 'existencia'), None)
                         
-                        # Limpiar filas vacías (las que agrega Google Sheets por defecto)
+                        # Limpiar filas vacías
                         if col_codigo:
                             df = df.dropna(subset=[col_codigo])
                         else:
                             df = df.dropna(how='all')
                             
-                        # Cálculos matemáticos si existen las columnas necesarias
-                        if 'Conteo' in df.columns and 'Existencia' in df.columns:
-                            df['dif'] = df['Conteo'].fillna(0) - df['Existencia'].fillna(0)
+                        # --- NUEVO: SUMAR TODOS LOS CONTEOS ---
+                        # Identificar todas las columnas que empiecen con la palabra "conteo"
+                        cols_conteos = [c for c in df.columns if str(c).strip().lower().startswith('conteo')]
+                        
+                        # Solo hacer la matemática si hay conteos Y encontró la columna de existencia
+                        if cols_conteos and col_existencia:
+                            # Asegurarse que son números
+                            for c in cols_conteos:
+                                df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
+                                
+                            # Sumar las rondas en una columna Total
+                            df['Total Conteo'] = df[cols_conteos].sum(axis=1)
                             
-                            # Buscar columna de Costo promedio (ignorar mayúsculas)
+                            # La diferencia se calcula sobre el Total
+                            df['dif'] = df['Total Conteo'] - pd.to_numeric(df[col_existencia], errors='coerce').fillna(0)
+                            
+                            # Calcular precios si existe el costo
                             col_costo = next((c for c in df.columns if str(c).strip().lower() == 'costo promedio'), None)
-                            
                             if col_costo:
                                 costo_val = pd.to_numeric(df[col_costo].astype(str).str.replace('$', '').str.replace(',', ''), errors='coerce').fillna(0)
                                 faltantes = df['dif'].apply(lambda x: abs(x) if x < 0 else 0)
@@ -217,6 +218,7 @@ elif rol == "💻 Administrador":
                                 df['precio venta'] = (precio_v_unitario * faltantes).round(2)
                                 
                         df.to_excel(writer, sheet_name=hoja.title, index=False)
+                        
                 
                 st.balloons()
                 st.success("¡Cálculos terminados!")
