@@ -1,0 +1,7 @@
+streamlit
+gspread
+pandas
+pyzbar
+Pillow
+gspread-dataframe
+openpyxl
