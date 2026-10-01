@@ -24,15 +24,28 @@ def conectar_google_sheets():
 
 libro_bd, conexion_exitosa, error_msg = conectar_google_sheets()
 
-# --- MEJORA: LIMPIEZA DE CÓDIGOS SÚPER ESTRICTA ---
+# --- MEJORA: LIMPIEZA DE CÓDIGOS SÚPER ESTRICTA (INCLUYE CEROS A LA IZQUIERDA) ---
 def limpiar_codigo(val):
     if pd.isna(val): return ""
-    # Si Sheets lo lee como número (ej. 84229488.0), le quitamos el decimal
-    if isinstance(val, float) and val.is_integer(): return str(int(val))
+    
+    # 1. Convertir a texto y quitar espacios en blanco
     val_str = str(val).strip()
-    if val_str.endswith('.0'): val_str = val_str[:-2]
-    return val_str
-
+    
+    # 2. Si Google Sheets lo leyó como decimal (ej. 12345.0), le quitamos el .0
+    if val_str.endswith('.0'): 
+        val_str = val_str[:-2]
+        
+    # 3. ELIMINAR CEROS A LA IZQUIERDA (El truco para los códigos con ceros)
+    # Convertimos "00123" en "123" para que coincida siempre.
+    val_str = val_str.lstrip('0')
+    
+    # 4. Si el código era literalmente un "0" y se borró, lo regresamos
+    if val_str == "": 
+        val_str = "0"
+        
+    # 5. Pasamos todo a mayúsculas por si hay letras (ej. cod-a1 -> COD-A1)
+    return val_str.upper()
+    
 def obtener_ronda_activa():
     try:
         return libro_bd.worksheet("Config").acell("B1").value
