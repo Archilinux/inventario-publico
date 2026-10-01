@@ -24,17 +24,20 @@ def conectar_google_sheets():
 
 libro_bd, conexion_exitosa, error_msg = conectar_google_sheets()
 
+# --- MEJORA: LIMPIEZA DE CÓDIGOS SÚPER ESTRICTA ---
 def limpiar_codigo(val):
     if pd.isna(val): return ""
+    # Si Sheets lo lee como número (ej. 84229488.0), le quitamos el decimal
     if isinstance(val, float) and val.is_integer(): return str(int(val))
-    return str(val).strip().replace('.0', '')
+    val_str = str(val).strip()
+    if val_str.endswith('.0'): val_str = val_str[:-2]
+    return val_str
 
-# --- NUEVA FUNCIÓN: LEER RONDA ACTIVA DESDE LA NUBE ---
 def obtener_ronda_activa():
     try:
         return libro_bd.worksheet("Config").acell("B1").value
     except:
-        return "Conteo 1" # Por defecto si aún no se configura
+        return "Conteo 1"
 
 st.title("📦 Inventario Agroequipos")
 
@@ -50,7 +53,6 @@ rol = st.sidebar.radio("Selecciona tu perfil:", ["📱 Capturista", "💻 Admini
 if rol == "📱 Capturista":
     st.subheader("Modo Escáner")
     
-    # Ignorar la hoja secreta de 'Config' para que los capturistas no la vean
     pestañas = [hoja.title for hoja in libro_bd.worksheets() if hoja.title != "Config"]
     if not pestañas:
         st.warning("⚠️ No hay almacenes cargados.")
@@ -59,7 +61,6 @@ if rol == "📱 Capturista":
     almacen_seleccionado = st.selectbox("1️⃣ Selecciona el Almacén:", pestañas)
     hoja_actual = libro_bd.worksheet(almacen_seleccionado)
     
-    # --- NUEVO: EL CAPTURISTA YA NO ELIGE, SOLO LEE LO QUE EL ADMIN DICTA ---
     ronda_conteo = obtener_ronda_activa()
     st.info(f"🔄 Capturando actualmente en: **{ronda_conteo}**")
     
@@ -80,46 +81,52 @@ if rol == "📱 Capturista":
             
         if codigos:
             codigo_detectado = codigos[0].data.decode('utf-8')
-            st.success(f"✅ Código detectado: {codigo_detectado}")
+            st.success(f"✅ Código detectado en cámara: {codigo_detectado}")
         else:
             st.error("❌ No se detectó código. Intenta poner el teléfono en HORIZONTAL.")
             
-    codigo_manual = st.text_input("O escribe el código aquí:", value=codigo_detectado)
-    cantidad = st.number_input("3️⃣ Cantidad física contada:", min_value=0.0, step=1.0)
-    
-    if st.button("💾 Guardar Conteo", type="primary", use_container_width=True):
-        if not codigo_manual:
-            st.warning("Falta el código de barras.")
-        else:
-            with st.spinner("Guardando en la nube..."):
-                df = get_as_dataframe(hoja_actual).dropna(how='all')
-                col_codigo = next((c for c in df.columns if str(c).strip().lower() in ['código', 'codigo', 'cod']), None)
-                
-                if col_codigo:
-                    df['_codigo_limpio'] = df[col_codigo].apply(limpiar_codigo)
-                    codigo_buscado = limpiar_codigo(codigo_manual)
+    # --- MEJORA: FORMULARIO QUE SE LIMPIA SOLO AL GUARDAR ---
+    with st.form("formulario_captura", clear_on_submit=True):
+        st.write("3️⃣ Confirma el código y la cantidad:")
+        codigo_manual = st.text_input("Código a registrar:", value=codigo_detectado)
+        cantidad = st.number_input("Cantidad física contada:", min_value=0.0, step=1.0)
+        
+        boton_guardar = st.form_submit_button("💾 Guardar Conteo", type="primary", use_container_width=True)
+        
+        if boton_guardar:
+            if not codigo_manual:
+                st.warning("Falta el código de barras.")
+            else:
+                with st.spinner("Guardando en la nube..."):
+                    # Obtenemos toda la hoja sin borrar filas para no perder el índice correcto
+                    df = get_as_dataframe(hoja_actual)
+                    col_codigo = next((c for c in df.columns if str(c).strip().lower() in ['código', 'codigo', 'cod']), None)
                     
-                    if codigo_buscado in df['_codigo_limpio'].values:
-                        indice_df = df[df['_codigo_limpio'] == codigo_buscado].index[0]
-                        fila_gsheets = int(indice_df) + 2 
-                        df = df.drop(columns=['_codigo_limpio'])
+                    if col_codigo:
+                        df['_codigo_limpio'] = df[col_codigo].apply(limpiar_codigo)
+                        codigo_buscado = limpiar_codigo(codigo_manual)
                         
-                        if ronda_conteo not in df.columns:
-                            col_escribir = len(df.columns) + 1
-                            hoja_actual.update_cell(1, col_escribir, ronda_conteo)
+                        if codigo_buscado in df['_codigo_limpio'].values:
+                            # Ubicamos la fila exacta
+                            indice_df = df[df['_codigo_limpio'] == codigo_buscado].index[0]
+                            fila_gsheets = int(indice_df) + 2 
+                            
+                            if ronda_conteo not in df.columns:
+                                col_escribir = len(df.columns) # Se agrega al final real de las columnas de datos
+                                hoja_actual.update_cell(1, col_escribir, ronda_conteo)
+                            else:
+                                col_escribir = df.columns.get_loc(ronda_conteo) + 1
+                            
+                            valor_actual = hoja_actual.cell(fila_gsheets, col_escribir).value
+                            valor_actual = float(valor_actual) if valor_actual else 0.0
+                            nuevo_valor = valor_actual + cantidad
+                            
+                            hoja_actual.update_cell(fila_gsheets, col_escribir, nuevo_valor)
+                            st.success(f"✔️ ¡Guardado exitoso! Se agregaron {cantidad} piezas al código {codigo_manual}. (Si usaste la cámara, ciérrala presionando la 'X' para escanear el siguiente).")
                         else:
-                            col_escribir = df.columns.get_loc(ronda_conteo) + 1
-                        
-                        valor_actual = hoja_actual.cell(fila_gsheets, col_escribir).value
-                        valor_actual = float(valor_actual) if valor_actual else 0.0
-                        nuevo_valor = valor_actual + cantidad
-                        
-                        hoja_actual.update_cell(fila_gsheets, col_escribir, nuevo_valor)
-                        st.success(f"✔️ ¡Guardado! {cantidad} piezas en {ronda_conteo} para el código {codigo_manual}.")
+                            st.error(f"❌ El código {codigo_manual} no existe en {almacen_seleccionado}.")
                     else:
-                        st.error(f"❌ El código {codigo_manual} no existe en {almacen_seleccionado}.")
-                else:
-                    st.error("❌ El archivo base no tiene una columna llamada 'Código'.")
+                        st.error("❌ El archivo base no tiene una columna llamada 'Código'.")
 
 # ==========================================
 # 💻 PERFIL: ADMINISTRADOR (PARA TI)
@@ -130,7 +137,6 @@ elif rol == "💻 Administrador":
     if pin == "1234":
         st.success("Acceso autorizado")
         
-        # --- NUEVO: PANEL DE CONTROL DE RONDAS ---
         st.subheader("⚙️ 1. Control de Rondas (Global)")
         ronda_actual = obtener_ronda_activa()
         st.info(f"Actualmente, todos los celulares están guardando en: **{ronda_actual}**")
@@ -144,7 +150,7 @@ elif rol == "💻 Administrador":
                 hoja_config.update_cell(1, 1, "Ronda Activa")
             hoja_config.update_cell(1, 2, nueva_ronda)
             st.success(f"¡Listo! Todos los celulares ahora guardarán en {nueva_ronda}")
-            st.rerun() # Recarga la pantalla para actualizar el mensaje azul
+            st.rerun()
         
         st.divider()
         
@@ -161,7 +167,6 @@ elif rol == "💻 Administrador":
                         if hoja.title != "Temp_borrar":
                             libro_bd.del_worksheet(hoja)
                             
-                    # Crear automáticamente la pestaña de Configuración oculta al subir el Excel
                     hoja_config = libro_bd.add_worksheet(title="Config", rows="2", cols="2")
                     hoja_config.update_cell(1, 1, "Ronda Activa")
                     hoja_config.update_cell(1, 2, "Conteo 1")
@@ -184,7 +189,6 @@ elif rol == "💻 Administrador":
                 
                 with pd.ExcelWriter(salida_excel, engine='openpyxl') as writer:
                     for hoja in libro_bd.worksheets():
-                        # Saltarse la pestaña oculta de configuración para no meterla en el Excel final
                         if hoja.title == "Config":
                             continue
                             
@@ -199,26 +203,28 @@ elif rol == "💻 Administrador":
                             
                         cols_conteos = [c for c in df.columns if str(c).strip().lower().startswith('conteo')]
                         
+                        # --- MEJORA: CÁLCULOS INDEPENDIENTES POR CADA CONTEO ---
                         if cols_conteos and col_existencia:
                             for c in cols_conteos:
                                 df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
+                                # Genera "Dif Conteo 1", "Dif Conteo 2", etc.
+                                dif_nombre = f"Dif {c}"
+                                df[dif_nombre] = df[c] - pd.to_numeric(df[col_existencia], errors='coerce').fillna(0)
                                 
-                            df['Total Conteo'] = df[cols_conteos].sum(axis=1)
-                            df['dif'] = df['Total Conteo'] - pd.to_numeric(df[col_existencia], errors='coerce').fillna(0)
-                            
-                            col_costo = next((c for c in df.columns if str(c).strip().lower() == 'costo promedio'), None)
-                            if col_costo:
-                                costo_val = pd.to_numeric(df[col_costo].astype(str).str.replace('$', '').str.replace(',', ''), errors='coerce').fillna(0)
-                                faltantes = df['dif'].apply(lambda x: abs(x) if x < 0 else 0)
-                                
-                                precio_v_unitario = costo_val / 0.7
-                                df['precio unitario'] = precio_v_unitario.round(2)
-                                df['precio venta'] = (precio_v_unitario * faltantes).round(2)
+                                col_costo = next((col for col in df.columns if str(col).strip().lower() == 'costo promedio'), None)
+                                if col_costo:
+                                    costo_val = pd.to_numeric(df[col_costo].astype(str).str.replace('$', '').str.replace(',', ''), errors='coerce').fillna(0)
+                                    faltantes = df[dif_nombre].apply(lambda x: abs(x) if x < 0 else 0)
+                                    
+                                    precio_v_unitario = costo_val / 0.7
+                                    df['precio unitario'] = precio_v_unitario.round(2)
+                                    # Genera la facturación específica de ESE conteo
+                                    df[f'Venta Faltante {c}'] = (precio_v_unitario * faltantes).round(2)
                                 
                         df.to_excel(writer, sheet_name=hoja.title, index=False)
                 
                 st.balloons()
-                st.success("¡Cálculos terminados!")
+                st.success("¡Cálculos independientes terminados!")
                 
                 st.download_button(
                     label="⬇️ Descargar Reporte Final (.xlsx)",
