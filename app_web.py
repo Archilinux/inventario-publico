@@ -125,7 +125,7 @@ if rol == "📱 Capturista":
 elif rol == "💻 Administrador":
     pin = st.text_input("Introduce el PIN secreto:", type="password")
     
-    if pin == "AgroSA":
+    if pin == "1234":
         st.success("Acceso autorizado")
         
         # SECCIÓN A: SUBIR EXCEL BASE
@@ -139,17 +139,27 @@ elif rol == "💻 Administrador":
                     # Leer Excel local
                     xls = pd.ExcelFile(archivo_excel)
                     
-                    # Limpiar el Google Sheet actual
+                    # 1. Crear una hoja temporal para que el archivo nunca quede vacío
+                    hoja_temp = libro_bd.add_worksheet(title="Temp_borrar", rows="1", cols="1")
+                    
+                    # 2. Borrar todas las hojas originales de forma segura
                     for hoja in libro_bd.worksheets():
-                        libro_bd.del_worksheet(hoja)
-                        
-                    # Crear pestañas nuevas y subir datos
+                        if hoja.title != "Temp_borrar":
+                            libro_bd.del_worksheet(hoja)
+                            
+                    # 3. Crear pestañas nuevas y subir tus datos
                     for nombre_hoja in xls.sheet_names:
                         df_hoja = pd.read_excel(xls, sheet_name=nombre_hoja)
+                        # Creamos la hoja en Google Sheets
                         nueva_hoja = libro_bd.add_worksheet(title=nombre_hoja, rows="1000", cols="20")
+                        # Pegamos los datos
                         set_with_dataframe(nueva_hoja, df_hoja)
                         
+                    # 4. Finalmente, borrar la hoja temporal
+                    libro_bd.del_worksheet(hoja_temp)
+                        
                     st.success("¡Base de datos actualizada! Los celulares ya pueden comenzar a capturar.")
+
 
         st.divider()
         
