@@ -24,7 +24,7 @@ def conectar_google_sheets():
 
 libro_bd, conexion_exitosa, error_msg = conectar_google_sheets()
 
-# --- MEJORA: LIMPIEZA DE CÓDIGOS SÚPER ESTRICTA ---
+# --- MEJORA: LIMPIEZA DE CÓDIGOS ANTI-DUPLICADOS ---
 def limpiar_codigo(val):
     if pd.isna(val): return ""
     
@@ -33,12 +33,11 @@ def limpiar_codigo(val):
     if val_str.endswith('.0'): 
         val_str = val_str[:-2]
         
-    # EL TRUCO DEL APÓSTROFE: Si viene con el apóstrofe de protección, lo quitamos
-    # de forma invisible en la memoria para que empate con lo que lee la cámara
-    if val_str.startswith("'"):
-        val_str = val_str[1:]
+    # Elimina TODOS los apóstrofes al inicio (por si se duplicaron)
+    val_str = val_str.lstrip("'")
         
     return val_str.upper()
+    
     
 def obtener_ronda_activa():
     try:
@@ -182,14 +181,12 @@ elif rol == "💻 Administrador":
                     for nombre_hoja in xls.sheet_names:
                         df_hoja = pd.read_excel(xls, sheet_name=nombre_hoja)
                         
-                        # --- NUEVO: APLICAR EL TRUCO DEL APÓSTROFE ---
                         col_codigo = next((c for c in df_hoja.columns if str(c).strip().lower() in ['código', 'codigo', 'cod']), None)
                         if col_codigo:
-                            # Si el código empieza con '0', le antepone un apóstrofe para protegerlo en la nube
+                            # Solo pone el apóstrofe si empieza con 0 y NO tiene uno ya
                             df_hoja[col_codigo] = df_hoja[col_codigo].apply(
-                                lambda x: f"'{str(x)}" if str(x).startswith('0') else x
+                                lambda x: f"'{str(x)}" if str(x).startswith('0') and not str(x).startswith("'") else str(x)
                             )
-                        # ----------------------------------------------
                         
                         nueva_hoja = libro_bd.add_worksheet(title=nombre_hoja, rows="1000", cols="20")
                         set_with_dataframe(nueva_hoja, df_hoja)
