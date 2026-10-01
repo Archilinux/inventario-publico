@@ -24,19 +24,28 @@ def conectar_google_sheets():
 
 libro_bd, conexion_exitosa, error_msg = conectar_google_sheets()
 
-# --- MEJORA: LIMPIEZA DE CÓDIGOS ANTI-DUPLICADOS ---
+# --- MEJORA FINAL: LIMPIEZA DE BÚSQUEDA UNIVERSAL ---
 def limpiar_codigo(val):
     if pd.isna(val): return ""
     
-    val_str = str(val).strip()
+    texto = str(val).strip()
     
-    if val_str.endswith('.0'): 
-        val_str = val_str[:-2]
+    # 1. Quitar .0 si Python lo leyó como decimal
+    if texto.endswith('.0'): 
+        texto = texto[:-2]
         
-    # Elimina TODOS los apóstrofes al inicio (por si se duplicaron)
-    val_str = val_str.lstrip("'")
+    # 2. Quitar apóstrofes (si los hay)
+    texto = texto.lstrip("'")
+    
+    # 3. EL SECRETO: Quitar ceros a la izquierda SOLO para la búsqueda.
+    # Así, "03032" (cámara) y "3032" o "03032" (Google Sheets) empatan perfecto.
+    # No te preocupes, esto no borra el cero de tu base de datos visual.
+    texto = texto.lstrip("0")
+    
+    if texto == "":
+        texto = "0"
         
-    return val_str.upper()
+    return texto.upper()
     
     
 def obtener_ronda_activa():
