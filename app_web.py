@@ -125,7 +125,7 @@ if rol == "📱 Capturista":
 elif rol == "💻 Administrador":
     pin = st.text_input("Introduce el PIN secreto:", type="password")
     
-    if pin == "1234":
+    if pin == "AgroSA":
         st.success("Acceso autorizado")
         
         # SECCIÓN A: SUBIR EXCEL BASE
