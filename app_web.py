@@ -24,26 +24,20 @@ def conectar_google_sheets():
 
 libro_bd, conexion_exitosa, error_msg = conectar_google_sheets()
 
-# --- MEJORA: LIMPIEZA DE CÓDIGOS SÚPER ESTRICTA (INCLUYE CEROS A LA IZQUIERDA) ---
+# --- MEJORA: LIMPIEZA DE CÓDIGOS SÚPER ESTRICTA ---
 def limpiar_codigo(val):
     if pd.isna(val): return ""
     
-    # 1. Convertir a texto y quitar espacios en blanco
     val_str = str(val).strip()
     
-    # 2. Si Google Sheets lo leyó como decimal (ej. 12345.0), le quitamos el .0
     if val_str.endswith('.0'): 
         val_str = val_str[:-2]
         
-    # 3. ELIMINAR CEROS A LA IZQUIERDA (El truco para los códigos con ceros)
-    # Convertimos "00123" en "123" para que coincida siempre.
-    val_str = val_str.lstrip('0')
-    
-    # 4. Si el código era literalmente un "0" y se borró, lo regresamos
-    if val_str == "": 
-        val_str = "0"
+    # EL TRUCO DEL APÓSTROFE: Si viene con el apóstrofe de protección, lo quitamos
+    # de forma invisible en la memoria para que empate con lo que lee la cámara
+    if val_str.startswith("'"):
+        val_str = val_str[1:]
         
-    # 5. Pasamos todo a mayúsculas por si hay letras (ej. cod-a1 -> COD-A1)
     return val_str.upper()
     
 def obtener_ronda_activa():
@@ -184,8 +178,19 @@ elif rol == "💻 Administrador":
                     hoja_config.update_cell(1, 1, "Ronda Activa")
                     hoja_config.update_cell(1, 2, "Conteo 1")
                     
+                   # Subir hojas a Google Sheets
                     for nombre_hoja in xls.sheet_names:
                         df_hoja = pd.read_excel(xls, sheet_name=nombre_hoja)
+                        
+                        # --- NUEVO: APLICAR EL TRUCO DEL APÓSTROFE ---
+                        col_codigo = next((c for c in df_hoja.columns if str(c).strip().lower() in ['código', 'codigo', 'cod']), None)
+                        if col_codigo:
+                            # Si el código empieza con '0', le antepone un apóstrofe para protegerlo en la nube
+                            df_hoja[col_codigo] = df_hoja[col_codigo].apply(
+                                lambda x: f"'{str(x)}" if str(x).startswith('0') else x
+                            )
+                        # ----------------------------------------------
+                        
                         nueva_hoja = libro_bd.add_worksheet(title=nombre_hoja, rows="1000", cols="20")
                         set_with_dataframe(nueva_hoja, df_hoja)
                         
