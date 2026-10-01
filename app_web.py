@@ -2,7 +2,7 @@ import streamlit as st
 import gspread
 from google.oauth2.service_account import Credentials
 import pandas as pd
-from PIL import Image
+from PIL import Image, ImageEnhance
 from pyzbar.pyzbar import decode
 from gspread_dataframe import set_with_dataframe, get_as_dataframe
 import io
