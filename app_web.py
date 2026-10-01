@@ -8,16 +8,12 @@ from gspread_dataframe import set_with_dataframe, get_as_dataframe
 import io
 import json
 
-# --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(page_title="App de Inventario", layout="centered", page_icon="📦")
-
-# --- CONEXIÓN A GOOGLE SHEETS ---
 
 @st.cache_resource
 def conectar_google_sheets():
     scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     try:
-        # Ahora lee la llave desde la bóveda secreta de Streamlit, no desde el archivo local
         creds_dict = json.loads(st.secrets["google_json"])
         credenciales = Credentials.from_service_account_info(creds_dict, scopes=scopes)
         cliente = gspread.authorize(credenciales)
@@ -28,21 +24,24 @@ def conectar_google_sheets():
 
 libro_bd, conexion_exitosa, error_msg = conectar_google_sheets()
 
-# Funciones auxiliares para buscar columnas (igual que en tu programa de escritorio)
 def limpiar_codigo(val):
     if pd.isna(val): return ""
     if isinstance(val, float) and val.is_integer(): return str(int(val))
     return str(val).strip().replace('.0', '')
 
-# --- INTERFAZ PRINCIPAL ---
+# --- NUEVA FUNCIÓN: LEER RONDA ACTIVA DESDE LA NUBE ---
+def obtener_ronda_activa():
+    try:
+        return libro_bd.worksheet("Config").acell("B1").value
+    except:
+        return "Conteo 1" # Por defecto si aún no se configura
+
 st.title("📦 Inventario Agroequipos")
 
 if not conexion_exitosa:
-    st.error("❌ No se pudo conectar a Google Sheets. Verifica que el archivo credenciales.json esté en la carpeta.")
-    st.write(f"Error técnico: {error_msg}")
+    st.error("❌ Error de conexión.")
     st.stop()
 
-# --- MENÚ DE ROLES ---
 rol = st.sidebar.radio("Selecciona tu perfil:", ["📱 Capturista", "💻 Administrador"])
 
 # ==========================================
@@ -51,19 +50,20 @@ rol = st.sidebar.radio("Selecciona tu perfil:", ["📱 Capturista", "💻 Admini
 if rol == "📱 Capturista":
     st.subheader("Modo Escáner")
     
-    pestañas = [hoja.title for hoja in libro_bd.worksheets()]
+    # Ignorar la hoja secreta de 'Config' para que los capturistas no la vean
+    pestañas = [hoja.title for hoja in libro_bd.worksheets() if hoja.title != "Config"]
     if not pestañas:
         st.warning("⚠️ No hay almacenes cargados.")
         st.stop()
         
     almacen_seleccionado = st.selectbox("1️⃣ Selecciona el Almacén:", pestañas)
-    
-    # --- NUEVO: SELECTOR DE RONDA DE CONTEO ---
-    ronda_conteo = st.selectbox("2️⃣ Ronda de captura:", ["Conteo 1", "Conteo 2", "Conteo 3"])
     hoja_actual = libro_bd.worksheet(almacen_seleccionado)
     
-    st.write("3️⃣ Escanea el producto o escribe el código")
+    # --- NUEVO: EL CAPTURISTA YA NO ELIGE, SOLO LEE LO QUE EL ADMIN DICTA ---
+    ronda_conteo = obtener_ronda_activa()
+    st.info(f"🔄 Capturando actualmente en: **{ronda_conteo}**")
     
+    st.write("2️⃣ Escanea el producto o escribe el código")
     codigo_detectado = ""
     foto_camara = st.camera_input("📷 Usar cámara del celular")
     
@@ -85,7 +85,7 @@ if rol == "📱 Capturista":
             st.error("❌ No se detectó código. Intenta poner el teléfono en HORIZONTAL.")
             
     codigo_manual = st.text_input("O escribe el código aquí:", value=codigo_detectado)
-    cantidad = st.number_input("4️⃣ Cantidad física contada:", min_value=0.0, step=1.0)
+    cantidad = st.number_input("3️⃣ Cantidad física contada:", min_value=0.0, step=1.0)
     
     if st.button("💾 Guardar Conteo", type="primary", use_container_width=True):
         if not codigo_manual:
@@ -93,8 +93,6 @@ if rol == "📱 Capturista":
         else:
             with st.spinner("Guardando en la nube..."):
                 df = get_as_dataframe(hoja_actual).dropna(how='all')
-                
-                # Buscar columna de código sin importar mayúsculas
                 col_codigo = next((c for c in df.columns if str(c).strip().lower() in ['código', 'codigo', 'cod']), None)
                 
                 if col_codigo:
@@ -104,10 +102,8 @@ if rol == "📱 Capturista":
                     if codigo_buscado in df['_codigo_limpio'].values:
                         indice_df = df[df['_codigo_limpio'] == codigo_buscado].index[0]
                         fila_gsheets = int(indice_df) + 2 
+                        df = df.drop(columns=['_codigo_limpio'])
                         
-                        df = df.drop(columns=['_codigo_limpio']) # Limpiar tabla temporal
-                        
-                        # Escribir en la columna de la ronda seleccionada (Ej. "Conteo 1")
                         if ronda_conteo not in df.columns:
                             col_escribir = len(df.columns) + 1
                             hoja_actual.update_cell(1, col_escribir, ronda_conteo)
@@ -131,47 +127,56 @@ if rol == "📱 Capturista":
 elif rol == "💻 Administrador":
     pin = st.text_input("Introduce el PIN secreto:", type="password")
     
-    if pin == "AgroSA":
+    if pin == "1234":
         st.success("Acceso autorizado")
         
-        # SECCIÓN A: SUBIR EXCEL BASE
-        st.subheader("📥 1. Cargar Base de Inventario")
-        st.write("Sube el archivo Excel del sistema para iniciar un nuevo conteo.")
+        # --- NUEVO: PANEL DE CONTROL DE RONDAS ---
+        st.subheader("⚙️ 1. Control de Rondas (Global)")
+        ronda_actual = obtener_ronda_activa()
+        st.info(f"Actualmente, todos los celulares están guardando en: **{ronda_actual}**")
+        
+        nueva_ronda = st.selectbox("Cambiar la ronda activa para todas las sucursales a:", ["Conteo 1", "Conteo 2", "Conteo 3", "Conteo 4"])
+        if st.button("Actualizar Ronda para todos"):
+            try:
+                hoja_config = libro_bd.worksheet("Config")
+            except:
+                hoja_config = libro_bd.add_worksheet(title="Config", rows="2", cols="2")
+                hoja_config.update_cell(1, 1, "Ronda Activa")
+            hoja_config.update_cell(1, 2, nueva_ronda)
+            st.success(f"¡Listo! Todos los celulares ahora guardarán en {nueva_ronda}")
+            st.rerun() # Recarga la pantalla para actualizar el mensaje azul
+        
+        st.divider()
+        
+        st.subheader("📥 2. Cargar Base de Inventario")
         archivo_excel = st.file_uploader("Selecciona el archivo Excel (.xlsx)", type=['xlsx'])
         
         if archivo_excel:
             if st.button("Subir a Google Sheets (Borrará el inventario anterior)", type="primary"):
                 with st.spinner("Procesando y subiendo a la nube..."):
-                    # Leer Excel local
                     xls = pd.ExcelFile(archivo_excel)
-                    
-                    # 1. Crear una hoja temporal para que el archivo nunca quede vacío
                     hoja_temp = libro_bd.add_worksheet(title="Temp_borrar", rows="1", cols="1")
                     
-                    # 2. Borrar todas las hojas originales de forma segura
                     for hoja in libro_bd.worksheets():
                         if hoja.title != "Temp_borrar":
                             libro_bd.del_worksheet(hoja)
                             
-                    # 3. Crear pestañas nuevas y subir tus datos
+                    # Crear automáticamente la pestaña de Configuración oculta al subir el Excel
+                    hoja_config = libro_bd.add_worksheet(title="Config", rows="2", cols="2")
+                    hoja_config.update_cell(1, 1, "Ronda Activa")
+                    hoja_config.update_cell(1, 2, "Conteo 1")
+                    
                     for nombre_hoja in xls.sheet_names:
                         df_hoja = pd.read_excel(xls, sheet_name=nombre_hoja)
-                        # Creamos la hoja en Google Sheets
                         nueva_hoja = libro_bd.add_worksheet(title=nombre_hoja, rows="1000", cols="20")
-                        # Pegamos los datos
                         set_with_dataframe(nueva_hoja, df_hoja)
                         
-                    # 4. Finalmente, borrar la hoja temporal
                     libro_bd.del_worksheet(hoja_temp)
-                        
-                    st.success("¡Base de datos actualizada! Los celulares ya pueden comenzar a capturar.")
-
+                    st.success("¡Base de datos actualizada! Los celulares ya pueden comenzar a capturar el Conteo 1.")
 
         st.divider()
         
-        # SECCIÓN B: CIERRE Y REPORTE
-        st.subheader("📤 2. Cerrar Inventario y Facturar")
-        st.write("Genera el reporte final con Subtotales. (Puedes generar este reporte las veces que quieras, no bloquea el sistema).")
+        st.subheader("📤 3. Cerrar Inventario y Facturar")
         
         if st.button("Generar Excel de Cierre", type="primary"):
             with st.spinner("Calculando diferencias y precios..."):
@@ -179,35 +184,28 @@ elif rol == "💻 Administrador":
                 
                 with pd.ExcelWriter(salida_excel, engine='openpyxl') as writer:
                     for hoja in libro_bd.worksheets():
+                        # Saltarse la pestaña oculta de configuración para no meterla en el Excel final
+                        if hoja.title == "Config":
+                            continue
+                            
                         df = get_as_dataframe(hoja)
-                        
-                        # Buscar columnas importantes ignorando mayúsculas/minúsculas
                         col_codigo = next((c for c in df.columns if str(c).strip().lower() in ['código', 'codigo', 'cod']), None)
                         col_existencia = next((c for c in df.columns if str(c).strip().lower() == 'existencia'), None)
                         
-                        # Limpiar filas vacías
                         if col_codigo:
                             df = df.dropna(subset=[col_codigo])
                         else:
                             df = df.dropna(how='all')
                             
-                        # --- NUEVO: SUMAR TODOS LOS CONTEOS ---
-                        # Identificar todas las columnas que empiecen con la palabra "conteo"
                         cols_conteos = [c for c in df.columns if str(c).strip().lower().startswith('conteo')]
                         
-                        # Solo hacer la matemática si hay conteos Y encontró la columna de existencia
                         if cols_conteos and col_existencia:
-                            # Asegurarse que son números
                             for c in cols_conteos:
                                 df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
                                 
-                            # Sumar las rondas en una columna Total
                             df['Total Conteo'] = df[cols_conteos].sum(axis=1)
-                            
-                            # La diferencia se calcula sobre el Total
                             df['dif'] = df['Total Conteo'] - pd.to_numeric(df[col_existencia], errors='coerce').fillna(0)
                             
-                            # Calcular precios si existe el costo
                             col_costo = next((c for c in df.columns if str(c).strip().lower() == 'costo promedio'), None)
                             if col_costo:
                                 costo_val = pd.to_numeric(df[col_costo].astype(str).str.replace('$', '').str.replace(',', ''), errors='coerce').fillna(0)
@@ -218,12 +216,10 @@ elif rol == "💻 Administrador":
                                 df['precio venta'] = (precio_v_unitario * faltantes).round(2)
                                 
                         df.to_excel(writer, sheet_name=hoja.title, index=False)
-                        
                 
                 st.balloons()
                 st.success("¡Cálculos terminados!")
                 
-                # Botón de descarga
                 st.download_button(
                     label="⬇️ Descargar Reporte Final (.xlsx)",
                     data=salida_excel.getvalue(),
@@ -231,3 +227,5 @@ elif rol == "💻 Administrador":
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     type="primary"
                 )
+    elif pin != "":
+        st.error("PIN incorrecto.")
