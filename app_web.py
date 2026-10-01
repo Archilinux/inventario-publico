@@ -178,22 +178,38 @@ elif rol == "💻 Administrador":
         
         # SECCIÓN B: CIERRE Y REPORTE
         st.subheader("📤 2. Cerrar Inventario y Facturar")
-        st.write("Genera el reporte final con Subtotales. Asegúrate de que los capturistas hayan terminado.")
+        st.write("Genera el reporte final con Subtotales. (Puedes generar este reporte las veces que quieras, no bloquea el sistema).")
         
-        if st.button("Cerrar Conteo y Generar Excel Final", type="primary"):
+        if st.button("Generar Excel de Cierre", type="primary"):
             with st.spinner("Calculando diferencias y precios..."):
                 salida_excel = io.BytesIO()
                 
                 with pd.ExcelWriter(salida_excel, engine='openpyxl') as writer:
                     for hoja in libro_bd.worksheets():
-                        df = get_as_dataframe(hoja).dropna(how='all', subset=['Código'])
+                        df = get_as_dataframe(hoja)
                         
-                        # Cálculos matemáticos si existe la columna de costo
+                        # Buscar la columna de código sin importar si tiene acento o mayúsculas
+                        col_codigo = None
+                        for col in df.columns:
+                            if str(col).strip().lower() in ['código', 'codigo', 'cod']:
+                                col_codigo = col
+                                break
+                        
+                        # Limpiar filas vacías (las que agrega Google Sheets por defecto)
+                        if col_codigo:
+                            df = df.dropna(subset=[col_codigo])
+                        else:
+                            df = df.dropna(how='all')
+                            
+                        # Cálculos matemáticos si existen las columnas necesarias
                         if 'Conteo' in df.columns and 'Existencia' in df.columns:
                             df['dif'] = df['Conteo'].fillna(0) - df['Existencia'].fillna(0)
                             
-                            if 'Costo promedio' in df.columns:
-                                costo_val = pd.to_numeric(df['Costo promedio'].astype(str).str.replace('$', '').str.replace(',', ''), errors='coerce').fillna(0)
+                            # Buscar columna de Costo promedio (ignorar mayúsculas)
+                            col_costo = next((c for c in df.columns if str(c).strip().lower() == 'costo promedio'), None)
+                            
+                            if col_costo:
+                                costo_val = pd.to_numeric(df[col_costo].astype(str).str.replace('$', '').str.replace(',', ''), errors='coerce').fillna(0)
                                 faltantes = df['dif'].apply(lambda x: abs(x) if x < 0 else 0)
                                 
                                 precio_v_unitario = costo_val / 0.7
@@ -213,5 +229,3 @@ elif rol == "💻 Administrador":
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     type="primary"
                 )
-    elif pin != "":
-        st.error("PIN incorrecto.")
