@@ -183,10 +183,20 @@ elif rol == "💻 Administrador":
                         
                         col_codigo = next((c for c in df_hoja.columns if str(c).strip().lower() in ['código', 'codigo', 'cod']), None)
                         if col_codigo:
-                            # Solo pone el apóstrofe si empieza con 0 y NO tiene uno ya
-                            df_hoja[col_codigo] = df_hoja[col_codigo].apply(
-                                lambda x: f"'{str(x)}" if str(x).startswith('0') and not str(x).startswith("'") else str(x)
-                            )
+                            def formatear_codigo_excel(val):
+                                if pd.isna(val): return ""
+                                texto = str(val).strip()
+                                # 1. Quitar decimales si Excel lo leyó como número (ej. 0123.0)
+                                if texto.endswith('.0'): 
+                                    texto = texto[:-2]
+                                # 2. ARRANCAR de raíz todos los apóstrofes que traiga arrastrando
+                                texto = texto.lstrip("'")
+                                # 3. Poner EXACTAMENTE UN apóstrofe, solo si empieza con 0
+                                if texto.startswith("0"):
+                                    return f"'{texto}"
+                                return texto
+                                
+                            df_hoja[col_codigo] = df_hoja[col_codigo].apply(formatear_codigo_excel)
                         
                         nueva_hoja = libro_bd.add_worksheet(title=nombre_hoja, rows="1000", cols="20")
                         set_with_dataframe(nueva_hoja, df_hoja)
