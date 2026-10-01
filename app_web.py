@@ -179,27 +179,28 @@ elif rol == "💻 Administrador":
                     
                    # Subir hojas a Google Sheets
                     for nombre_hoja in xls.sheet_names:
-                        df_hoja = pd.read_excel(xls, sheet_name=nombre_hoja)
+                        # 1. Forzar a Python a leer TODO el Excel como texto puro desde el inicio
+                        df_hoja = pd.read_excel(xls, sheet_name=nombre_hoja, dtype=str)
+                        df_hoja = df_hoja.fillna('') # Limpiar celdas vacías (NaN)
                         
                         col_codigo = next((c for c in df_hoja.columns if str(c).strip().lower() in ['código', 'codigo', 'cod']), None)
                         if col_codigo:
-                            def formatear_codigo_excel(val):
-                                if pd.isna(val): return ""
+                            def limpiar_basura_excel(val):
                                 texto = str(val).strip()
-                                # 1. Quitar decimales si Excel lo leyó como número (ej. 0123.0)
-                                if texto.endswith('.0'): 
-                                    texto = texto[:-2]
-                                # 2. ARRANCAR de raíz todos los apóstrofes que traiga arrastrando
+                                # Quitamos los apóstrofes por si tu Excel original ya traía alguno
                                 texto = texto.lstrip("'")
-                                # 3. Poner EXACTAMENTE UN apóstrofe, solo si empieza con 0
-                                if texto.startswith("0"):
-                                    return f"'{texto}"
+                                # Quitamos el molesto .0
+                                if texto.endswith('.0'):
+                                    texto = texto[:-2]
                                 return texto
                                 
-                            df_hoja[col_codigo] = df_hoja[col_codigo].apply(formatear_codigo_excel)
+                            df_hoja[col_codigo] = df_hoja[col_codigo].apply(limpiar_basura_excel)
                         
                         nueva_hoja = libro_bd.add_worksheet(title=nombre_hoja, rows="1000", cols="20")
-                        set_with_dataframe(nueva_hoja, df_hoja)
+                        
+                        # 2. EL TRUCO FINAL: allow_formulas=False manda los datos en modo "CRUDO" (RAW). 
+                        # Google Sheets no intentará adivinar si es número, conservando el 0 intacto.
+                        set_with_dataframe(nueva_hoja, df_hoja, allow_formulas=False)
                         
                     libro_bd.del_worksheet(hoja_temp)
                     st.success("¡Base de datos actualizada! Los celulares ya pueden comenzar a capturar el Conteo 1.")
